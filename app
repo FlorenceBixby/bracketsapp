@@ -1,64 +1,65 @@
-import javax.servlet.ServletException;
-import javax.servlet.annotation.WebServlet;
-import javax.servlet.http.HttpServlet;
-import javax.servlet.http.HttpServletRequest;
-import javax.servlet.http.HttpServletResponse;
-import javax.servlet.http.HttpSession;
-import java.io.IOException;
-import java.io.PrintWriter;
-import java.util.ArrayList;
-import java.util.List;
+from flask import Flask, render_template, request, redirect, url_for, session
+from flask_sqlalchemy import SQLAlchemy
+import random
 
-@WebServlet("/bracket")
-public class BracketServlet extends HttpServlet {
-    private static final long serialVersionUID = 1L;
+app = Flask(__name__)
+app.secret_key = 'your_secret_key'
+app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///brackets.db'
+db = SQLAlchemy(app)
 
-    protected void doGet(HttpServletRequest request, HttpServletResponse response) throws ServletException, IOException {
-        response.setContentType("text/html");
-        PrintWriter out = response.getWriter();
-        out.println("<html><body>");
-        out.println("<h2>Login</h2>");
-        out.println("<form method='POST' action='bracket'>");
-        out.println("Username: <input type='text' name='username'><br>");
-        out.println("Password: <input type='password' name='password'><br>");
-        out.println("<input type='submit' value='Login'>");
-        out.println("</form>");
-        out.println("</body></html>");
-    }
+class User(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    username = db.Column(db.String(80), unique=True, nullable=False)
+    password = db.Column(db.String(120), nullable=False)
 
-    protected void doPost(HttpServletRequest request, HttpServletResponse response) throws ServletException, IOException {
-        String username = request.getParameter("username");
-        String password = request.getParameter("password");
+class Bracket(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
+    size = db.Column(db.Integer, nullable=False)
+    items = db.Column(db.Text, nullable=False)
+    is_private = db.Column(db.Boolean, default=False)
 
-        // Simple authentication (for demonstration purposes)
-        if ("user".equals(username) && "pass".equals(password)) {
-            HttpSession session = request.getSession();
-            session.setAttribute("username", username);
-            showBracketOptions(response);
-        } else {
-            response.sendRedirect("bracket");
-        }
-    }
+@app.route('/')
+def home():
+    return render_template('home.html')
 
-    private void showBracketOptions(HttpServletResponse response) throws IOException {
-        PrintWriter out = response.getWriter();
-        out.println("<html><body>");
-        out.println("<h2>Select Bracket Size</h2>");
-        out.println("<form method='POST' action='createBracket'>");
-        out.println("Choose size: <select name='size'>");
-        out.println("<option value='4'>4</option>");
-        out.println("<option value='8'>8</option>");
-        out.println("<option value='12'>12</option>");
-        out.println("<option value='16'>16</option>");
-        out.println("<option value='32'>32</option>");
-        out.println("<option value='64'>64</option>");
-        out.println("<option value='128'>128</option>");
-        out.println("</select><br>");
-        out.println("Input items by ranking: <input type='text' name='items'><br>");
-        out.println("Randomize items: <input type='checkbox' name='random'><br>");
-        out.println("Make bracket public: <input type='checkbox' name='public'><br>");
-        out.println("<input type='submit' value='Create Bracket'>");
-        out.println("</form>");
-        out.println("</body></html>");
-    }
-}
+@app.route('/login', methods=['GET', 'POST'])
+def login():
+    if request.method == 'POST':
+        username = request.form['username']
+        password = request.form['password']
+        user = User.query.filter_by(username=username, password=password).first()
+        if user:
+            session['user_id'] = user.id
+            return redirect(url_for('dashboard'))
+    return render_template('login.html')
+
+@app.route('/dashboard')
+def dashboard():
+    if 'user_id' not in session:
+        return redirect(url_for('login'))
+    brackets = Bracket.query.filter_by(user_id=session['user_id']).all()
+    return render_template('dashboard.html', brackets=brackets)
+
+@app.route('/create_bracket', methods=['GET', 'POST'])
+def create_bracket():
+    if request.method == 'POST':
+        size = int(request.form['size'])
+        items = request.form['items'].split(',')
+        is_private = 'is_private' in request.form
+        if 'random' in request.form:
+            random.shuffle(items)
+        new_bracket = Bracket(user_id=session['user_id'], size=size, items=','.join(items), is_private=is_private)
+        db.session.add(new_bracket)
+        db.session.commit()
+        return redirect(url_for('dashboard'))
+    return render_template('create_bracket.html')
+
+@app.route('/logout')
+def logout():
+    session.pop('user_id', None)
+    return redirect(url_for('home'))
+
+if __name__ == '__main__':
+    db.create_all()
+    app.run(debug=True)
